@@ -2,9 +2,9 @@ import os
 from PIL import Image
 
 # Direktori dataset
-train_dir = '/Users/nabilamutiara/Downloads/TugasFinalDeepLearning/training'
-validation_dir = '/Users/nabilamutiara/Downloads/TugasFinalDeepLearning/validation'
-test_dir = '/Users/nabilamutiara/Downloads/TugasFinalDeepLearning/testing'
+train_dir = 'datasetdeeplearning/training'
+validation_dir = 'datasetdeeplearning/validation'
+test_dir = 'datasetdeeplearning/testing'
 
 # Fungsi untuk mengubah ukuran gambar dan formatnya ke JPG
 def resize_and_convert_to_jpg(directory, size=(177, 177)):
