@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+import matplotlib.pyplot as plt
 from PIL import Image
 import torch.nn.functional as F
 
@@ -18,25 +20,22 @@ test_dir = 'datasetdeeplearning/testing'
 img_height, img_width = 177, 177
 batch_size = 32
 
-# Transformasi gambar untuk preprocessing
+# Transformasi data
 train_transform = transforms.Compose([
-    transforms.Resize((img_height, img_width)),  # Ubah ukuran ke dimensi target
-    transforms.ToTensor(),  # Konversi ke tensor
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalisasi
+    transforms.Resize((img_height, img_width)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 validation_transform = transforms.Compose([
-    transforms.Resize((img_height, img_width)),  # Ubah ukuran ke dimensi target
-    transforms.ToTensor(),  # Konversi ke tensor
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalisasi
+    transforms.Resize((img_height, img_width)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 test_transform = validation_transform
 
-
-
-
-# Dataset dan DataLoader untuk train, validasi, dan testing
+# Dataset dan DataLoader
 train_dataset = datasets.ImageFolder(train_dir, transform=train_transform)
 validation_dataset = datasets.ImageFolder(validation_dir, transform=validation_transform)
 test_dataset = datasets.ImageFolder(test_dir, transform=test_transform)
@@ -45,10 +44,12 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-# Membuat model sederhana dengan CNN
+# Definisi model
 class SimpleNet2D(nn.Module):
-    def __init__(self, num_classes, img_height, img_width):
+    def __init__(self, num_classes):
         super(SimpleNet2D, self).__init__()
+        
+        # Lapisan konvolusional dan Batch Normalization
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
@@ -58,48 +59,58 @@ class SimpleNet2D(nn.Module):
         self.conv4 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
         self.bn4 = nn.BatchNorm2d(512)
 
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))  # Global average pooling
+        # Max Pooling dan Global Average Pooling
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Fully Connected Layer dan Dropout
         self.fc1 = nn.Linear(512, 1024)
-        self.fc2 = nn.Linear(1024, num_classes)
-        self.dropout = nn.Dropout(0.5)
+        self.bn_fc1 = nn.BatchNorm1d(1024)  # Batch Normalization pada FC1
+        self.fc2 = nn.Linear(1024, 512)
+        self.bn_fc2 = nn.BatchNorm1d(512)  # Batch Normalization pada FC2
+        self.fc3 = nn.Linear(512, num_classes)
+        self.dropout = nn.Dropout(0.4)  # Dropout untuk regularisasi
 
     def forward(self, x):
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = self.pool(F.relu(self.bn3(self.conv3(x))))
-        x = self.pool(F.relu(self.bn4(self.conv4(x))))
+        # Konvolusi dan Batch Normalization dengan LeakyReLU
+        x = self.pool(F.leaky_relu(self.bn1(self.conv1(x)), negative_slope=0.1))
+        x = self.pool(F.leaky_relu(self.bn2(self.conv2(x)), negative_slope=0.1))
+        x = self.pool(F.leaky_relu(self.bn3(self.conv3(x)), negative_slope=0.1))
+        x = self.pool(F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.1))
+
+        # Global Average Pooling
         x = self.global_avg_pool(x)
-        x = x.view(x.size(0), -1)  # Flatten layer
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
+        x = x.view(x.size(0), -1)  # Flatten tensor untuk input ke fully connected layer
+
+        # Fully Connected dan Batch Normalization
+        x = F.leaky_relu(self.bn_fc1(self.fc1(x)), negative_slope=0.1)
+        x = self.dropout(x)  # Dropout setelah FC1
+        x = F.leaky_relu(self.bn_fc2(self.fc2(x)), negative_slope=0.1)
+        x = self.fc3(x)  # Output layer
+        
         return x
 
-# Membuat model dan definisi loss function serta optimizer
-num_classes = len(train_dataset.classes)
-model = SimpleNet2D(num_classes=num_classes, img_height=img_height, img_width=img_width)
 
-# Menggunakan GPU jika tersedia
+# Model, loss, optimizer
+num_classes = len(train_dataset.classes)
+model = SimpleNet2D(num_classes=num_classes)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-# Fungsi pelatihan
-def train_model(
-    model, train_loader, validation_loader, criterion, optimizer, scheduler, num_epochs=70, patience=10
-):
-    best_val_loss = float("inf")
-    best_model_weights = model.state_dict()
-    epochs_no_improve = 0
 
+# Pelatihan model
+num_epochs = 50
+train_acc_history = []
+val_acc_history = []
+
+def train_model():
     for epoch in range(num_epochs):
         model.train()
-        running_loss = 0.0
-        correct_preds = 0
-        total_preds = 0
+        correct_train = 0
+        total_train = 0
 
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -110,138 +121,77 @@ def train_model(
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
-            _, predicted = torch.max(outputs, 1)
-            total_preds += labels.size(0)
-            correct_preds += (predicted == labels).sum().item()
+            _, preds = torch.max(outputs, 1)
+            correct_train += (preds == labels).sum().item()
+            total_train += labels.size(0)
 
-        train_loss = running_loss / len(train_loader)
-        train_accuracy = correct_preds / total_preds * 100
+        train_acc = correct_train / total_train
+        train_acc_history.append(train_acc)
 
         # Validasi
         model.eval()
-        val_loss = 0.0
-        val_correct_preds = 0
-        val_total_preds = 0
+        correct_val = 0
+        total_val = 0
 
         with torch.no_grad():
             for inputs, labels in validation_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
                 outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
+                _, preds = torch.max(outputs, 1)
+                correct_val += (preds == labels).sum().item()
+                total_val += labels.size(0)
 
-                _, predicted = torch.max(outputs, 1)
-                val_total_preds += labels.size(0)
-                val_correct_preds += (predicted == labels).sum().item()
+        val_acc = correct_val / total_val
+        val_acc_history.append(val_acc)
 
-        val_loss /= len(validation_loader)
-        val_accuracy = val_correct_preds / val_total_preds * 100
-
-        print(
-            f"Epoch [{epoch+1}/{num_epochs}], "
-            f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%, "
-            f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%"
-        )
+        print(f"Epoch {epoch+1}/{num_epochs}, Train Accuracy: {train_acc:.2f}, Val Accuracy: {val_acc:.2f}")
 
         scheduler.step()
+    torch.save(model.state_dict(), 'model3.pth')
+    print("Model saved as model3.pth")
 
-        # Early stopping logic
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_model_weights = model.state_dict()
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
+train_model()
 
-        if epochs_no_improve >= patience:
-            print(f"Early stopping triggered after {epoch+1} epochs.")
-            break
+# Evaluasi model
+model.eval()
+all_preds = []
+all_labels = []
 
-    # Load the best model weights
-    model.load_state_dict(best_model_weights)
-    return model
+with torch.no_grad():
+    for inputs, labels in test_loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
 
+# Test Accuracy
+test_accuracy = np.sum(np.array(all_preds) == np.array(all_labels)) / len(all_labels)
+print(f"Test Accuracy: {test_accuracy:.2f}")
 
+# Confusion Matrix per Kelas
+cm = confusion_matrix(all_labels, all_preds)
+print("Confusion Matrix per Kelas:")
+print(cm)
 
-# Melatih model
-trained_model = train_model(model, train_loader, validation_loader, criterion, optimizer, scheduler, num_epochs=70)
+# Grafik akurasi
+plt.figure(figsize=(10, 5))
+plt.plot(range(1, len(train_acc_history) + 1), train_acc_history, label='Train Accuracy')
+plt.plot(range(1, len(val_acc_history) + 1), val_acc_history, label='Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Accuracy over Epochs')
+plt.legend()
+plt.show()
 
-# Evaluasi model pada data uji
-def evaluate_model(model, test_loader):
-    model.eval()
-    test_loss = 0.0
-    correct_preds = 0
-    total_preds = 0
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            test_loss += loss.item()
-            
-            _, predicted = torch.max(outputs, 1)
-            total_preds += labels.size(0)
-            correct_preds += (predicted == labels).sum().item()
-    
-    test_loss /= len(test_loader)
-    test_accuracy = correct_preds / total_preds * 100
-    return test_loss, test_accuracy
-from sklearn.metrics import confusion_matrix, classification_report
-
-def calculate_class_wise_confusion_matrix(test_loader, model):
-    model.eval()
-    all_labels = []
-    all_predictions = []
-
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs, 1)
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(predicted.cpu().numpy())
-
-    # Hitung confusion matrix
-    cm = confusion_matrix(all_labels, all_predictions)
-    class_names = train_dataset.classes
-
-    # Tampilkan confusion matrix untuk setiap kelas
-    for idx, class_name in enumerate(class_names):
-        print(f"Confusion Matrix for Class '{class_name}':")
-        print(f"True Positive: {cm[idx, idx]}")
-        print(f"False Positive: {sum(cm[:, idx]) - cm[idx, idx]}")
-        print(f"False Negative: {sum(cm[idx, :]) - cm[idx, idx]}")
-        print(f"True Negative: {sum(sum(cm)) - (sum(cm[idx, :]) + sum(cm[:, idx]) - cm[idx, idx])}")
-        print("-" * 30)
-
-    # Tampilkan laporan klasifikasi
-    print("\nClassification Report:")
-    print(classification_report(all_labels, all_predictions, target_names=class_names))
-
-# Panggil fungsi untuk menghitung confusion matrix
-calculate_class_wise_confusion_matrix(test_loader, trained_model)
-
-# Evaluasi model pada data uji
-test_loss, test_accuracy = evaluate_model(trained_model, test_loader)
-print(f"Test Accuracy: {test_accuracy:.2f}%")
-
-# Menyimpan model
-torch.save(trained_model.state_dict(), 'model2.pth')
-
-# Fungsi untuk mengklasifikasikan gambar
-def classify_image(img_path, model):
-    img = Image.open(img_path).convert('RGB')
-    img = img.resize((img_width, img_height))
-    img_tensor = transforms.ToTensor()(img).unsqueeze(0).to(device)
-    model.eval()
-    with torch.no_grad():
-        outputs = model(img_tensor)
-    _, predicted = torch.max(outputs, 1)
-    class_idx = predicted.item()
-    class_label = train_dataset.classes[class_idx]
-    print(f"Predicted Class: {class_label}")
-
-# Klasifikasikan gambar
-image_path = 'datasetdeeplearning/testing/dataset_semangka/semangka87.jpg'  # Ganti dengan path gambar yang sesuai
-classify_image(image_path, trained_model)
+# Confusion Matrix sebagai gambar
+plt.figure(figsize=(8, 8))
+plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+plt.title('Confusion Matrix')
+plt.colorbar()
+plt.xticks(ticks=np.arange(num_classes), labels=train_dataset.classes, rotation=45)
+plt.yticks(ticks=np.arange(num_classes), labels=train_dataset.classes)
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.tight_layout()
+plt.show()
